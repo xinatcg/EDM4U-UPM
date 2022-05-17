@@ -1,0 +1,73 @@
+name: UPM Semantic Release CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Semantic release
+        id: semantic   # Need an `id` for output variables
+        uses: cycjimmy/semantic-release-action@v3
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+          branch: main
+          semantic_version: 19.0.2  # It is recommended to specify specifying version range
+          # for semantic-release. https://github.com/semantic-release/semantic-release/releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.JB_NPM_TOKEN }}
+      - name: Create upm branch
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          git branch -d upm &> /dev/null || echo upm branch not found
+          git subtree split -P "$PKG_ROOT" -b upm
+          git checkout upm
+          if [[ -d "Samples" ]]; then
+            git mv Samples Samples~
+            rm -f Samples.meta
+            git config --global user.name 'github-bot'
+            git config --global user.email 'github-bot@users.noreply.github.com'
+            git commit -am "fix: Samples => Samples~"
+          fi
+          git push -f -u origin upm
+        env:
+          PKG_ROOT: Assets/SharedLibs
+      - name: Creat upm git tag
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          git tag $TAG upm
+          git push origin --tags
+        env:
+          TAG: upm/${{ steps.semantic.outputs.new_release_version }}
+      - name: Use Node.js
+        if: steps.semantic.outputs.new_release_published == 'true'
+        uses: actions/setup-node@v2
+        with:
+          always-auth: true
+          node-version: '12.x'
+          registry-url: https://npm.pkg.jetbrains.space/playwind/p/cb/unity/
+          scope: '@myorg'
+      - name: NPM Publish
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: npm publish --registry https://npm.pkg.jetbrains.space/playwind/p/cb/unity/
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.JB_NPM_TOKEN}}
+#      - name: Publish NPM to private registry
+#        id: publish
+#        if: steps.semantic.outputs.new_release_published == 'true'
+#        uses: JS-DevTools/npm-publish@v1
+#        with:
+#          token: ${{ secrets.JB_NPM_TOKEN }}
+#          registry: https://npm.pkg.jetbrains.space/playwind/p/cb/unity/
+#      - name: After publish
+#        if: steps.publish.outputs.type != 'none'
+#        run: |
+#          echo "Version changed: ${{ steps.publish.outputs.old-version }} => ${{ steps.publish.outputs.version }}"
